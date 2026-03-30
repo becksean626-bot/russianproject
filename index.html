@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>SILA ENGINE v24.5 - DIMENSION FIX</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Courier New', monospace; }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 10px; height: 10px; border: 2px solid rgba(255, 0, 0, 0.7); transform: translate(-50%, -50%); border-radius: 50%; pointer-events: none; z-index: 100; }
+        #ui { position: absolute; top: 20px; left: 20px; color: #0f0; background: rgba(0,0,0,0.8); padding: 15px; border: 1px solid #444; z-index: 1000; }
+        #dialog { position: absolute; bottom: 10%; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.9); color: white; padding: 25px; border: 2px solid red; display: none; z-index: 2000; font-size: 22px; text-align: center; width: 60%; }
+        #instructions { position: absolute; inset: 0; background: rgba(0,0,0,0.95); color: #fff; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 9999; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+<div id="ui"><b>СИЛА ENGINE v24.5</b><br>Soldat: <span id="s-status">Booting...</span><br>Pelmeni: <span id="p-count">0</span></div>
+<div id="dialog"></div>
+<div id="instructions"><h1>СИЛА</h1><p>DIMENSION RECONSTRUCTED</p><p style="border: 1px solid #0f0; padding: 10px;">KLICKEN ZUM DIENSTANTRETT</p></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/RGBELoader.js"></script>
+
+<script>
+let scene, camera, renderer, clock, mixer, soldierNPC, ak47;
+let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+let velocity = new THREE.Vector3();
+let missionDone = false;
+
+// PFADE AUS DEINEN SCREENSHOTS
+const FOLDER_MODEL = 'assets/cadnav.com_model/Models_E0120A061/';
+const FILE_MODEL = 'Comrade soviet soldier.gltf';
+const PATH_HAUS = 'assets/haus/scene.gltf';
+const PATH_AK = 'assets/ak47_model/scene.gltf';
+const TEXTURE_BASE = 'textures/';
+
+function showDialog(text, time = 4500) {
+    const d = document.getElementById('dialog');
+    d.innerHTML = text; d.style.display = 'block';
+    setTimeout(() => { d.style.display = 'none'; }, time);
+}
+
+function init() {
+    scene = new THREE.Scene();
+    clock = new THREE.Clock();
+    camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 2000);
+    camera.rotation.order = 'YXZ';
+    camera.position.set(0, 1.7, 7); // Start vor dem Spawn
+
+    renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.outputEncoding = THREE.sRGBEncoding;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    document.body.appendChild(renderer.domElement);
+
+    scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+    const sun = new THREE.DirectionalLight(0xffffff, 1.0); sun.position.set(50, 100, 50); scene.add(sun);
+
+    const loader = new THREE.GLTFLoader();
+    const tLoader = new THREE.TextureLoader();
+
+    // 1. BODEN FIX (Dunkelgrau)
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), new THREE.MeshStandardMaterial({ color: 0x111111 }));
+    floor.rotation.x = -Math.PI / 2;
+    scene.add(floor);
+
+    // 2. HAUS LADEN (v18 Restposten-Größe korrigiert)
+    loader.load(PATH_HAUS, (gltf) => {
+        const haus = gltf.scene;
+        haus.position.set(-20, 0, -30);
+        
+        // --- HAUS-GRÖSSE FIX: Wir machen es 10x größer als im alten Code ---
+        haus.scale.set(50, 50, 50); 
+        scene.add(haus);
+    });
+
+    // 3. SOLDAT LADEN (Schachmatt für Fehler)
+    loader.load(FOLDER_MODEL + FILE_MODEL, (gltf) => {
+        soldierNPC = gltf.scene;
+        
+        // Skalierung: Von Gigantisch auf Menschlich (3ds Max Export)
+        const s = 0.015; 
+        soldierNPC.scale.set(s, s, s); 
+        soldierNPC.position.set(0, 0, 0);
+
+        // --- DER TEXTUR-FIX (MUSS!) ---
+        soldierNPC.traverse((child) => {
+            if (child.isMesh) {
+                // Wir mappen die Texturen händisch, falls die GLTF sie verliert
+                if(child.name.toLowerCase().includes('greatcoat')) child.material.map = tLoader.load(TEXTURE_BASE + 'greatcoat.jpg');
+                if(child.name.toLowerCase().includes('head')) child.material.map = tLoader.load(TEXTURE_BASE + 'head.jpg');
+                if(child.name.toLowerCase().includes('ushanka')) child.material.map = tLoader.load(TEXTURE_BASE + 'ushanka.jpg');
+                
+                child.material.needsUpdate = true;
+                child.material.side = THREE.DoubleSide;
+                child.material.map.encoding = THREE.sRGBEncoding;
+            }
+        });
+
+        // Animationen
+        if(gltf.animations.length) {
+            mixer = new THREE.AnimationMixer(soldierNPC);
+            mixer.clipAction(gltf.animations[0]).play();
+        }
+
+        scene.add(soldierNPC);
+        document.getElementById('s-status').innerText = "Soldat bereit";
+    }, undefined, (e) => {
+        // --- ERSATZ FALLS MODELL STREIKT ---
+        console.warn("Konnte Soldaten-Modell nicht laden (Konflikt?), nutze Ersatz.");
+        const dummy = new THREE.Mesh(new THREE.BoxGeometry(1, 2, 1), new THREE.MeshBasicMaterial({ color: 0x00ff00 }));
+        dummy.position.set(0, 1, 0);
+        scene.add(dummy);
+        soldierNPC = dummy; // Zuweisen, damit Dialog trigger funktioniert
+        document.getElementById('s-status').innerText = "Nutze Ersatz-Genosse";
+    });
+
+    // 4. AK-47 LADEN (Aus stabilem Code v18.0)
+    loader.load(PATH_AK, (gltf) => {
+        ak47 = gltf.scene; ak47.position.set(0.8, -0.8, -1.2); ak47.scale.set(0.007, 0.007, 0.007); camera.add(ak47); scene.add(camera);
+    });
+
+    // CONTROLS & LOCK
+    const inst = document.getElementById('instructions');
+    inst.addEventListener('click', () => {
+        document.body.requestPointerLock(); inst.style.display = 'none';
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (document.pointerLockElement === document.body) {
+            camera.rotation.y -= e.movementX * 0.002;
+            camera.rotation.x = Math.max(-1.5, Math.min(1.5, camera.rotation.x - e.movementY * 0.002));
+        }
+    });
+
+    const onKey = (e, v) => {
+        if (e.code === 'KeyW') moveForward = v; if (e.code === 'KeyS') moveBackward = v;
+        if (e.code === 'KeyA') moveLeft = v; if (e.code === 'KeyD') moveRight = v;
+    };
+    document.addEventListener('keydown', (e) => onKey(e, true));
+    document.addEventListener('keyup', (e) => onKey(e, false));
+
+    function animate() {
+        requestAnimationFrame(animate);
+        const delta = clock.getDelta(); if(mixer) mixer.update(delta);
+
+        if (document.pointerLockElement === document.body) {
+            velocity.x -= velocity.x * 10.0 * delta; velocity.z -= velocity.z * 10.0 * delta;
+            if (moveForward) velocity.z -= 110.0 * delta; if (moveBackward) velocity.z += 110.0 * delta;
+            if (moveLeft) velocity.x -= 110.0 * delta; if (moveRight) velocity.x += 110.0 * delta;
+
+            camera.translateX(velocity.x * delta); camera.translateZ(velocity.z * delta);
+            camera.position.y = 1.7; // Augenhöhe
+
+            // DIALOG TRIGGER (automatisch bei Annäherung)
+            if(!missionDone && soldierNPC && camera.position.distanceTo(soldierNPC.position) < 4.5) {
+                missionDone = true;
+                showDialog("<b>GENOSSE:</b> Sdorowja Gorbaschow!<br>Nimm diese Pelmeni, rette das Mütterchen Russland.");
+                setTimeout(() => { document.getElementById('p-count').innerText = "1 Sack"; }, 4800);
+            }
+        }
+        renderer.render(scene, camera);
+    }
+    animate();
+}
+window.addEventListener('load', init);
+</script>
+</body>
+</html>
